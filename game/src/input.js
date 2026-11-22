@@ -6,10 +6,6 @@ export function createInput(canvas) {
   let click = null;
   let mouse = { x: 0, y: 0 };
 
-  function code(e) {
-    return e.code;
-  }
-
   window.addEventListener('keydown', (e) => {
     if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(e.code)) e.preventDefault();
     if (!e.repeat) pressed.add(e.code);

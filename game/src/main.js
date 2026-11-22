@@ -1,16 +1,18 @@
 // Game loop and state machine: one job only. Title -> play -> caught /
-// win / game over, floor progression, the alarm, and the tool keys. The
-// ?shot= query freezes a staged frame for screenshots.
-import { TOP_BAR, WORLD_W, DETECTION, LIVES } from './config.js';
+// win / game over, floor progression, the alarm, the lasers, the decoy
+// and the tool keys. The ?shot= query freezes a staged frame for
+// screenshots.
+import { TOP_BAR, WORLD_W, DETECTION, UNSEEN_BONUS } from './config.js';
 import { parseFloor } from './levels.js';
 import { makeGuard, updateGuard } from './guards.js';
 import { updateCamera, cameraSees } from './cameras.js';
-import { createToolState, useSmoke, useEmp, tossCoin, updatePick, nearestLockedDoor } from './tools.js';
-import { createPlayer, updatePlayer, collectLoot, atExit, atGetaway } from './player.js';
+import { laserAlarm } from './lasers.js';
+import { createToolState, useSmoke, useEmp, tossCoin, dropDecoy, updateDecoy, updatePick, nearestLockedDoor } from './tools.js';
+import { createPlayer, updatePlayer, collectLoot, atExit, atGetaway, atHelipad } from './player.js';
 import { createInput } from './input.js';
 import { drawGame } from './render.js';
 import { applyShot } from './shots.js';
-import { ensureAudio, startMusic, sfxPickup, sfxAlarm, sfxCaught, sfxCoin, sfxDoor, sfxWin } from './audio.js';
+import { ensureAudio, startMusic, sfxPickup, sfxAlarm, sfxLaser, sfxDecoy, sfxCaught, sfxCoin, sfxDoor, sfxWin } from './audio.js';
 
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
@@ -28,18 +30,23 @@ function newState(floorIndex) {
     guards: floor.guards.map((g) => makeGuard(g, floorIndex)),
     player: createPlayer(floor.start),
     tools: createToolState(),
-    alarm: 0,
-    time: 0,
-    mode: 'title',
-    caughtBy: null,
+    decoy: null,
     coinAt: null,
     coinT: 0,
+    alarm: 0,
+    time: 0,
+    bonus: 0, // unseen bonus: $2,500 per floor cleared without being spotted
+    spotted: false, // set the moment any guard or camera fully spots the thief
+    laserSfxT: 0,
+    mode: 'title',
+    caughtBy: null,
     frozen: false,
     alarmSounded: false,
   };
 }
 
 // Keep the loot and the thief when a floor is cleared: the heist is one run.
+// A floor cleared without a single spot pays the unseen bonus.
 function nextFloor(state) {
   const keep = {
     loot: state.player.loot,
@@ -47,6 +54,7 @@ function nextFloor(state) {
     jewelsTaken: state.player.jewelsTaken,
     lives: state.player.lives,
     tools: state.tools,
+    bonus: state.bonus + (state.spotted ? 0 : UNSEEN_BONUS),
   };
   const next = newState(state.floorIndex + 1);
   next.player.loot = keep.loot;
@@ -54,6 +62,7 @@ function nextFloor(state) {
   next.player.jewelsTaken = keep.jewelsTaken;
   next.player.lives = keep.lives;
   next.tools = keep.tools;
+  next.bonus = keep.bonus;
   next.time = state.time;
   next.mode = 'play';
   return next;
@@ -62,13 +71,14 @@ function nextFloor(state) {
 let state = newState(0);
 if (shotName) {
   // Staged screenshots start on the floor that shows the moment best.
-  const shotFloor = shotName === 'peak' || shotName === 'win' ? 2 : shotName === 'shadow' ? 1 : 0;
+  const shotFloor = shotName === 'peak' || shotName === 'win' ? 2 : shotName === 'vent' ? 1 : 0;
   state = newState(shotFloor);
   applyShot(state, shotName);
   state.mode = shotName === 'win' ? 'win' : 'play';
 }
 
 function onSpotted(g) {
+  state.spotted = true;
   state.alarm = Math.min(100, state.alarm + DETECTION.alarmOnSpot);
   if (state.alarm >= 60 && !state.alarmSounded) {
     state.alarmSounded = true;
@@ -77,6 +87,7 @@ function onSpotted(g) {
 }
 
 function onCaught(g) {
+  state.spotted = true;
   state.player.lives -= 1;
   state.caughtBy = g.name;
   sfxCaught();
@@ -103,6 +114,7 @@ function onTakeLoot(item) {
   if (item.kind === 'painting' || item.kind === 'gold') state.tools.smoke = Math.min(3, state.tools.smoke + 1);
   if (item.kind === 'gem') state.tools.emp = Math.min(2, state.tools.emp + 1);
   if (item.kind === 'coin') state.tools.coin = Math.min(5, state.tools.coin + 1);
+  if (item.kind === 'safe') state.tools.decoy = Math.min(2, state.tools.decoy + 1);
 }
 
 function tick(dt) {
@@ -117,6 +129,7 @@ function tick(dt) {
     state.coinT -= dt;
     if (state.coinT <= 0) state.coinAt = null;
   }
+  if (state.laserSfxT > 0) state.laserSfxT -= dt;
 
   updatePlayer(state.player, dt, input, state.floor);
   collectLoot(state.player, state.floor, onTakeLoot);
@@ -127,6 +140,13 @@ function tick(dt) {
   }
   if (input.wasPressed('KeyR')) {
     if (useEmp(state.tools)) sfxCoin();
+  }
+  if (input.wasPressed('KeyT')) {
+    const d = dropDecoy(state.tools, state.player.x, state.player.y);
+    if (d) {
+      state.decoy = d;
+      sfxDecoy();
+    }
   }
   const click = input.takeClick();
   if (click && click.x < WORLD_W && click.y > TOP_BAR) {
@@ -148,19 +168,37 @@ function tick(dt) {
     if (door) door.progress = 0;
   }
 
+  // The decoy mouse scurries and re-lures guards as it wanders.
+  state.decoy = updateDecoy(state.decoy, dt, state.floor, state.guards);
+
   // Guards and cameras.
   for (const g of state.guards) {
-    updateGuard(g, dt, state.floor, state.player, state.alarm, onCaught, onSpotted);
+    updateGuard(g, dt, state.floor, state.player, state.alarm, state.tools.empT, onCaught, onSpotted);
   }
   for (const cam of state.floor.cameras) {
     updateCamera(cam, dt, state.floor, state.player, state.tools.empT);
     const seen = cameraSees(cam, state.floor, state.player, state.tools.empT);
     if (seen > 0) {
+      state.spotted = true;
       state.alarm = Math.min(100, state.alarm + seen * dt);
       if (state.alarm >= 60 && !state.alarmSounded) {
         state.alarmSounded = true;
         sfxAlarm();
       }
+    }
+  }
+  // Laser grids: crossing a live beam trips the alarm fast.
+  const laserRate = laserAlarm(state.floor, state.player, state.tools.empT);
+  if (laserRate > 0) {
+    state.spotted = true;
+    state.alarm = Math.min(100, state.alarm + laserRate * dt);
+    if (state.laserSfxT <= 0) {
+      sfxLaser();
+      state.laserSfxT = 0.5;
+    }
+    if (state.alarm >= 60 && !state.alarmSounded) {
+      state.alarmSounded = true;
+      sfxAlarm();
     }
   }
   // Alarm cools when nobody sees you.
@@ -180,11 +218,11 @@ function tick(dt) {
     }
   }
 
-  // Floor progression and the getaway.
+  // Floor progression and the two getaways.
   if (state.floorIndex < 2 && atExit(state.player, state.floor)) {
     state = nextFloor(state);
     sfxDoor();
-  } else if (state.floorIndex === 2 && state.player.jewelsTaken && atGetaway(state.player, state.floor)) {
+  } else if (state.floorIndex === 2 && state.player.jewelsTaken && (atGetaway(state.player, state.floor) || atHelipad(state.player, state.floor))) {
     state.mode = 'win';
     sfxWin();
   }

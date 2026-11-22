@@ -1,4 +1,4 @@
-// GILDED EXCHANGE — the hand-in program (Node 22, standard library only).
+// GILDED EXCHANGE II — the hand-in program (Node 22, standard library only).
 // It copies this repository's game/ and screenshots/ to /output and writes
 // /output/dossier.json with the vendored make.fun library, exactly as the
 // kit's starter does. Outside the grader, MAKEFUN_OUTPUT_DIR stands in
@@ -41,7 +41,7 @@ writeFileSync(
   }),
 );
 
-console.log(`GILDED EXCHANGE handed in to ${out}`);
+console.log(`GILDED EXCHANGE II handed in to ${out}`);
 
 // A one-line receipt for the maker: how many screenshots went in, so a
 // missing render is noticed before the entry is submitted, not after.

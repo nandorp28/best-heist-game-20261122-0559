@@ -1,9 +1,9 @@
 // Guard brains: one job only. Patrol, suspicion, chase, investigate and
 // the "caught" moment. Each guard kind from config.js moves and sees
 // differently; all of them read cones before they move, like the judge
-// wants the player to do.
+// wants the player to do. A thief inside a vent grate cannot be seen.
 import { GUARD_KINDS, DETECTION, CATCH_RADIUS } from './config.js';
-import { hasLineOfSight, inShadow, tileAt, blocksMove } from './levels.js';
+import { hasLineOfSight, inShadow, inVent, tileAt, blocksMove } from './levels.js';
 import { dist, angleDiff, clamp } from './rng.js';
 import { makeRng } from './rng.js';
 
@@ -55,6 +55,8 @@ function moveToward(g, tx, ty, dt, floor) {
 }
 
 function canSee(g, floor, px, py, sneaking) {
+  // Nobody sees a thief crawling inside a vent grate.
+  if (inVent(floor, px, py)) return 0;
   const d = dist(g.x, g.y, px, py);
   const range = g.kind === 'hound' ? g.coneRange + 40 : g.coneRange;
   if (d > range) return 0;
@@ -69,7 +71,13 @@ function canSee(g, floor, px, py, sneaking) {
   return Math.max(rate, 0.12);
 }
 
-export function updateGuard(g, dt, floor, player, alarm, onCaught, onSpotted) {
+export function updateGuard(g, dt, floor, player, alarm, empT, onCaught, onSpotted) {
+  // EMP stuns drones outright; it only blinds everyone else's cones
+  // through the smoke-style handling in the caller. Drones hover, so
+  // they never walk a route on foot — they glide it.
+  if (g.kind === 'drone' && empT > 0) {
+    g.stunT = Math.max(g.stunT, empT);
+  }
   if (g.stunT > 0) {
     g.stunT -= dt;
     g.suspicion = Math.max(0, g.suspicion - dt);
@@ -80,6 +88,10 @@ export function updateGuard(g, dt, floor, player, alarm, onCaught, onSpotted) {
   if (g.kind === 'warden' && g.state === 'patrol') {
     g.sweepPhase += dt * 0.55;
     g.facing = -Math.PI / 2 + Math.sin(g.sweepPhase) * 1.1;
+  }
+  // Drone: glides its route, cone sweeping gently as it goes.
+  if (g.kind === 'drone' && g.state === 'patrol') {
+    g.sweepPhase += dt * 0.4;
   }
 
   const seen = g.state !== 'chase' ? canSee(g, floor, player.x, player.y, player.sneaking) : 1;
@@ -152,16 +164,31 @@ export function updateGuard(g, dt, floor, player, alarm, onCaught, onSpotted) {
 }
 
 // A thrown coin: every guard in earshot turns to investigate the spot.
-// Sleuths run; patrolmen walk.
+// Sleuths run; patrolmen walk. Drones ignore coins — they watch, they
+// don't listen.
 export function lureGuards(guards, x, y) {
   for (const g of guards) {
-    if (g.state === 'chase' || g.stunT > 0) continue;
+    if (g.state === 'chase' || g.stunT > 0 || g.kind === 'drone') continue;
     if (dist(g.x, g.y, x, y) < 260) {
       g.state = 'investigate';
       g.investigateX = x;
       g.investigateY = y;
       g.investigateT = g.kind === 'sleuth' ? 4 : 2.5;
       g.suspicion = Math.max(g.suspicion, 0.3);
+    }
+  }
+}
+
+// A decoy mouse: the same lure, retargeted as the mouse wanders.
+export function lureToDecoy(guards, x, y) {
+  for (const g of guards) {
+    if (g.state === 'chase' || g.stunT > 0 || g.kind === 'drone') continue;
+    if (dist(g.x, g.y, x, y) < 300) {
+      g.state = 'investigate';
+      g.investigateX = x;
+      g.investigateY = y;
+      g.investigateT = 1.2;
+      g.suspicion = Math.max(g.suspicion, 0.25);
     }
   }
 }

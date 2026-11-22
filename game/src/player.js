@@ -1,7 +1,8 @@
-// The thief: one job only. Movement, sneaking, loot pickup, lives and the
-// getaway. Collision is circle-vs-tile against walls and closed doors.
-import { PLAYER_SPEED, PLAYER_SNEAK_SPEED, LOOT_VALUES } from './config.js';
-import { tileAt, blocksMove } from './levels.js';
+// The thief: one job only. Movement, sneaking, vent crawling, loot
+// pickup, lives and the two getaways. Collision is circle-vs-tile
+// against walls and closed doors.
+import { PLAYER_SPEED, PLAYER_SNEAK_SPEED, PLAYER_VENT_SPEED, LOOT_VALUES } from './config.js';
+import { tileAt, blocksMove, inVent } from './levels.js';
 import { clamp, dist } from './rng.js';
 
 export function createPlayer(start) {
@@ -10,6 +11,7 @@ export function createPlayer(start) {
     y: start.y,
     facing: -Math.PI / 2,
     sneaking: false,
+    inVent: false,
     alive: true,
     lives: 3,
     loot: 0,
@@ -29,11 +31,12 @@ export function updatePlayer(p, dt, input, floor) {
   if (input.down('KeyA', 'ArrowLeft')) dx -= 1;
   if (input.down('KeyD', 'ArrowRight')) dx += 1;
   p.sneaking = input.down('ShiftLeft', 'ShiftRight');
+  p.inVent = inVent(floor, p.x, p.y);
   p.moving = dx !== 0 || dy !== 0;
   if (!p.moving) return;
 
   const len = Math.hypot(dx, dy);
-  const speed = (p.sneaking ? PLAYER_SNEAK_SPEED : PLAYER_SPEED) * dt;
+  const speed = (p.inVent ? PLAYER_VENT_SPEED : p.sneaking ? PLAYER_SNEAK_SPEED : PLAYER_SPEED) * dt;
   const nx = p.x + (dx / len) * speed;
   const ny = p.y + (dy / len) * speed;
   p.facing = Math.atan2(dy, dx);
@@ -61,7 +64,7 @@ function circleBlocked(floor, x, y, r) {
 }
 
 // Loot is pocketed by walking over it. The Crown Jewels are the prize:
-// taking them opens the getaway and arms the final chase.
+// taking them opens both getaways and arms the final chase.
 export function collectLoot(p, floor, onTake) {
   for (const item of floor.loot) {
     if (item.taken) continue;
@@ -81,4 +84,8 @@ export function atExit(p, floor) {
 
 export function atGetaway(p, floor) {
   return floor.getaway && dist(p.x, p.y, floor.getaway.x, floor.getaway.y) < 34;
+}
+
+export function atHelipad(p, floor) {
+  return floor.helipad && dist(p.x, p.y, floor.helipad.x, floor.helipad.y) < 34;
 }

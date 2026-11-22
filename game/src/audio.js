@@ -1,6 +1,7 @@
 // Sound: one job only. All sound is synthesized with WebAudio — no audio
 // files, no network. A soft jazz-noir bed: brushed hats, a walking bass
-// line and a muted trumpet blip on pickups; the alarm is a two-tone siren.
+// line and a muted trumpet blip on pickups; the alarm is a two-tone siren,
+// the laser a short zap, the decoy a clockwork tick.
 let ctx = null;
 let musicTimer = null;
 let bassStep = 0;
@@ -58,6 +59,18 @@ export function sfxAlarm() {
   if (!ctx) return;
   tone(620, 0.22, 'square', 0.045);
   tone(440, 0.22, 'square', 0.045, 0.24);
+}
+
+export function sfxLaser() {
+  if (!ctx) return;
+  tone(1800, 0.1, 'sawtooth', 0.04);
+  tone(900, 0.14, 'sawtooth', 0.04, 0.08);
+}
+
+export function sfxDecoy() {
+  if (!ctx) return;
+  tone(2093, 0.05, 'square', 0.03);
+  tone(1568, 0.05, 'square', 0.03, 0.09);
 }
 
 export function sfxCaught() {

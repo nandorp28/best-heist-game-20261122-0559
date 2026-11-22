@@ -1,7 +1,8 @@
 // Security cameras: one job only. A camera sweeps its cone back and forth;
 // while the thief is inside it the alarm climbs fast. EMP kills them.
+// A thief inside a vent grate is invisible to cameras too.
 import { DETECTION } from './config.js';
-import { hasLineOfSight, inShadow } from './levels.js';
+import { hasLineOfSight, inShadow, inVent } from './levels.js';
 import { dist, angleDiff } from './rng.js';
 
 export function updateCamera(cam, dt, floor, player, disabledT) {
@@ -19,6 +20,7 @@ export function updateCamera(cam, dt, floor, player, disabledT) {
 
 export function cameraSees(cam, floor, player, disabledT) {
   if (disabledT > 0 || !player.alive) return 0;
+  if (inVent(floor, player.x, player.y)) return 0;
   const d = dist(cam.x, cam.y, player.x, player.y);
   if (d > 210) return 0;
   const ang = Math.atan2(player.y - cam.y, player.x - cam.x);
